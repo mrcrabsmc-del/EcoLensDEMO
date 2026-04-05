@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EcoLens | AI Waste Vision</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
+        body { font-family: 'Outfit', sans-serif; background: #f0f4f0; margin: 0; }
+        .view { display: none; min-height: 100vh; }
+        .view.active { display: block; }
+        .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.3); }
+        .nav-item.active { color: #10b981; }
+        .scan-anim { border-top: 4px solid #10b981; width: 100%; position: absolute; animation: scanMove 2s infinite linear; box-shadow: 0 0 20px #10b981; z-index: 10; }
+        @keyframes scanMove { 0% { top: 0; } 100% { top: 100%; } }
+        video { transform: scaleX(-1); width: 100%; height: 100%; object-fit: cover; }
+        #canvas { transform: scaleX(-1); } /* Sync canvas with mirrored video */
+    </style>
+</head>
+<body class="max-w-md mx-auto shadow-2xl relative bg-white">
+
+    <header class="p-5 flex justify-between items-center bg-white/80 backdrop-blur-md sticky top-0 z-[60]">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center text-white"><i class="fas fa-leaf"></i></div>
+            <h1 class="text-xl font-extrabold text-gray-800">EcoLens</h1>
+        </div>
+        <div id="userBadge" class="flex items-center gap-3">
+            <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-[10px] font-bold">Lvl 4 Eco-Warrior</span>
+        </div>
+    </header>
+
+    <main id="home" class="view active p-5 pb-24">
+        <div class="bg-gradient-to-br from-green-500 to-emerald-700 p-6 rounded-3xl text-white shadow-lg mb-8">
+            <p class="text-sm opacity-80">Today's Progress</p>
+            <h2 class="text-3xl font-bold">4.2kg <span class="text-lg font-light">Waste Diverted</span></h2>
+            <div class="w-full bg-white/20 h-2 rounded-full mt-4"><div class="bg-white h-2 rounded-full" style="width: 70%"></div></div>
+        </div>
+
+        <h3 class="font-bold text-gray-700 mb-4">Daily Challenges</h3>
+        <div class="glass p-4 rounded-2xl flex items-center gap-4 mb-8">
+            <i class="fas fa-tint text-blue-500 text-xl"></i>
+            <div><p class="font-bold text-sm">Wash 3 Plastic Bottles</p><p class="text-xs text-gray-500">+50 Points</p></div>
+            <button class="ml-auto bg-green-500 text-white px-3 py-1 rounded-lg text-xs" onclick="this.innerText='Done!'; this.disabled=true;">Do it</button>
+        </div>
+
+        <h3 class="font-bold text-gray-700 mb-4">Community Masterpieces</h3>
+        <div class="grid grid-cols-2 gap-3" id="community-feed"></div>
+    </main>
+
+    <main id="scanner" class="view h-screen bg-black relative">
+        <div id="loadingModel" class="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center text-white p-10 text-center">
+            <div class="animate-spin text-4xl mb-4 text-green-500"><i class="fas fa-circle-notch"></i></div>
+            <p class="font-bold">Booting Eco-Vision AI...</p>
+        </div>
+        
+        <div class="relative w-full h-[80vh] overflow-hidden rounded-b-[40px]">
+            <div class="scan-anim"></div>
+            <video id="webcam" autoplay muted playsinline></video>
+            <canvas id="canvas" class="absolute top-0 left-0 w-full h-full z-20"></canvas>
+        </div>
+
+        <div class="absolute bottom-24 left-0 right-0 px-6 z-30">
+            <div id="aiResult" class="glass p-5 rounded-3xl border-2 border-green-500 hidden shadow-2xl">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-[10px] font-black text-green-600 uppercase tracking-widest">Material Identified</p>
+                        <h4 id="detectedName" class="text-2xl font-black capitalize text-gray-800">Item</h4>
+                        <p id="disposalGuide" class="text-xs text-gray-500 mt-1 italic">Recycle in the Blue Bin</p>
+                    </div>
+                    <span class="bg-green-500 text-white px-2 py-1 rounded text-[10px] font-bold">MATCH FOUND</span>
+                </div>
+                <div class="mt-4 flex gap-2">
+                    <button id="findUpcycleBtn" class="flex-1 bg-gray-800 text-white py-3 rounded-2xl text-xs font-bold uppercase tracking-wider">Upcycle Ideas</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <main id="hub" class="view p-5 pb-24">
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h2 class="text-2xl font-black">Upcycle Hub</h2>
+                <p id="hubFilterText" class="text-xs text-gray-500">Showing all creative projects</p>
+            </div>
+            <button onclick="openSubmit()" class="w-10 h-10 bg-green-500 rounded-full text-white shadow-lg"><i class="fas fa-plus"></i></button>
+        </div>
+        <div class="grid grid-cols-1 gap-4" id="hubItems"></div>
+        <button id="clearFilter" class="mt-4 text-xs text-green-600 font-bold hidden" onclick="loadHub()">View All Projects</button>
+    </main>
+
+    <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass border-t border-gray-100 px-10 py-4 flex justify-between items-center z-50">
+        <button onclick="showView('home')" class="nav-item flex flex-col items-center gap-1"><i class="fas fa-house-user text-xl"></i><span class="text-[10px] font-bold">Home</span></button>
+        <button onclick="showView('scanner')" class="flex flex-col items-center -mt-12">
+            <div class="w-16 h-16 bg-gradient-to-tr from-green-500 to-emerald-400 rounded-full flex items-center justify-center text-white shadow-xl border-4 border-white">
+                <i class="fas fa-camera text-2xl"></i>
+            </div>
+        </button>
+        <button onclick="showView('hub')" class="nav-item flex flex-col items-center gap-1 text-gray-400"><i class="fas fa-lightbulb text-xl"></i><span class="text-[10px] font-bold">Hub</span></button>
+    </nav>
+
+    <script>
+        let model;
+        let lastDetectedClass = "";
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Logic Mapping for your Objective II & IV
+        const disposalRules = {
+            "bottle": "Rinse and place in Plastic Recycling Bin. Remove cap.",
+            "cup": "If paper: Compost. If plastic: Check for recycling symbol #1-5.",
+            "wine glass": "Glass Bin. Do not include broken ceramics.",
+            "bowl": "Usually Ceramic: General Waste. If Plastic: Recycling.",
+            "cell phone": "E-Waste! Take to a specialized drop-off point.",
+            "laptop": "E-Waste! Contains hazardous battery materials.",
+            "default": "Check local guidelines for this material."
+        };
+
+        const upcycleData = [
+            { name: "Plastic Bottle Planter", tag: "bottle", time: "15m", icon: "flask" },
+            { name: "Self-Watering Garden", tag: "bottle", time: "30m", icon: "tint" },
+            { name: "Cereal Box Organizer", tag: "box", time: "20m", icon: "box-open" },
+            { name: "Glass Jar Terrarium", tag: "bottle", time: "45m", icon: "seedling" },
+            { name: "Desktop Pen Holder", tag: "cup", time: "10m", icon: "pencil-alt" }
+        ];
+
+        window.onload = async () => {
+            loadCommunity();
+            loadHub();
+            model = await cocoSsd.load();
+            document.getElementById('loadingModel').classList.add('hidden');
+        };
+
+        function showView(id) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            
+            // Update nav colors
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active', 'text-green-600'));
+            event.currentTarget.classList?.add('active', 'text-green-600');
+
+            if(id === 'scanner') startCamera(); else stopCamera();
+        }
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    detectFrame();
+                };
+            } catch (err) { alert("Camera access denied."); }
+        }
+
+        function stopCamera() {
+            if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+            document.getElementById('aiResult').classList.add('hidden');
+        }
+
+        async function detectFrame() {
+            if (document.getElementById('scanner').classList.contains('active')) {
+                const predictions = await model.detect(video);
+                renderPredictions(predictions);
+                requestAnimationFrame(detectFrame);
+            }
+        }
+
+        function renderPredictions(predictions) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const resultBox = document.getElementById('aiResult');
+
+            if (predictions.length > 0) {
+                const p = predictions[0];
+                lastDetectedClass = p.class;
+                
+                // Draw Box
+                ctx.strokeStyle = "#10b981";
+                ctx.lineWidth = 6;
+                ctx.strokeRect(p.bbox[0], p.bbox[1], p.bbox[2], p.bbox[3]);
+
+                // Update UI
+                resultBox.classList.remove('hidden');
+                document.getElementById('detectedName').innerText = p.class;
+                document.getElementById('disposalGuide').innerText = disposalRules[p.class] || disposalRules.default;
+                
+                document.getElementById('findUpcycleBtn').onclick = () => {
+                    showView('hub');
+                    filterHub(p.class);
+                };
+            }
+        }
+
+        function filterHub(category) {
+            const filtered = upcycleData.filter(i => i.tag.includes(category) || category.includes(i.tag));
+            renderHubItems(filtered.length > 0 ? filtered : upcycleData);
+            document.getElementById('hubFilterText').innerText = `Matches for "${category}"`;
+            document.getElementById('clearFilter').classList.remove('hidden');
+        }
+
+        function loadHub() {
+            renderHubItems(upcycleData);
+            document.getElementById('hubFilterText').innerText = "Showing all creative projects";
+            document.getElementById('clearFilter').classList.add('hidden');
+        }
+
+        function renderHubItems(items) {
+            const container = document.getElementById('hubItems');
+            container.innerHTML = items.map(i => `
+                <div class="glass p-5 rounded-3xl flex items-center gap-4 shadow-sm border-none">
+                    <div class="w-14 h-14 bg-green-100 rounded-2xl flex items-center justify-center text-green-600 text-xl"><i class="fas fa-${i.icon}"></i></div>
+                    <div class="flex-1">
+                        <h4 class="font-bold text-gray-800">${i.name}</h4>
+                        <p class="text-[10px] uppercase font-black text-gray-400 tracking-widest">${i.tag} • ${i.time}</p>
+                    </div>
+                    <i class="fas fa-chevron-right text-gray-300"></i>
+                </div>
+            `).join('');
+        }
+
+        function loadCommunity() {
+    // Palalo dyty papaubra u hahha
+    const feed = [
+        { 
+            title: "Glass Jar Terrarium", 
+            img: "https://tropicalglass.co.uk/cdn/shop/files/Top_-_2022-10-20T115035.518.png?v=1666373554&width=4096" 
+        },
+        { 
+            title: "Denim Tote Bag", 
+            img: "https://images.unsplash.com/photo-1594223274512-ad4803739b7c?auto=format&fit=crop&w=400&q=80" 
+        }
+    ];
+
+    const container = document.getElementById('community-feed');
+    container.innerHTML = feed.map(item => `
+        <div class="bg-white rounded-2xl overflow-hidden shadow-md">
+            <img src="${item.img}" 
+                 alt="${item.title}" 
+                 class="w-full h-32 object-cover border-b border-gray-100"
+                 onerror="this.src='https://via.placeholder.com/400x300?text=Eco+Project'">
+            <p class="p-3 text-[10px] font-bold text-gray-700">${item.title}</p>
+        </div>
+    `).join('');
+}
+        
+    </script>
+</body>
+</html>
